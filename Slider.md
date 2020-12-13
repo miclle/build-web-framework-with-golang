@@ -29,24 +29,25 @@ Miclle Zheng
 
 # Simple HTTP Server
 
-使用 `net/http` 包实现一个最简单、最基础的 HTTP 服务。
+使用 [`net/http#ListenAndServe`](https://golang.org/pkg/net/http/#ListenAndServe) 包实现一个最简单、最基础的 HTTP 服务。
 
 ```go
 package main
 
 import (
 	"io"
+	"log"
 	"net/http"
 )
 
-func helloHandler(w http.ResponseWriter, req *http.Request) {
-	io.WriteString(w, "Hello, world!\n")
-}
-
 func main() {
+	// Hello world, the web server
+	helloHandler := func(w http.ResponseWriter, req *http.Request) {
+		io.WriteString(w, "Hello, world!\n")
+	}
 
 	http.HandleFunc("/hello", helloHandler)
-	http.ListenAndServe(":3000", nil)
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 ```
 
@@ -59,7 +60,7 @@ go run main.go
 #### 测试访问 /hello 路由：
 
 ```
-curl -i 127.0.0.1:3000/hello
+curl -i 127.0.0.1:8080/hello
 ```
 
 ```
@@ -74,7 +75,7 @@ Hello, world!
 #### 测试访问不存在的 /test 路由：
 
 ```
-curl -i 127.0.0.1:3000/test
+curl -i 127.0.0.1:8080/test
 ```
 
 ```
@@ -91,14 +92,10 @@ Content-Length: 19
 
 #### handler
 
-`handlers` 是 `net/http` 服务器里面的一个基本概念。
-`handler` 对象实现了 `http.Handler` 接口。
-编写 `handler` 的常见方法是，在具有适当签名的函数上使用 `http.HandlerFunc` 适配器。
-
 handler 函数有两个参数，http.ResponseWriter 和 http.Request。 response writer 被用于写入 HTTP 响应数据，这里我们简单的返回 "Hello, world!\n"。
 
 ```go
-func helloHandler(w http.ResponseWriter, req *http.Request) {
+helloHandler := func(w http.ResponseWriter, req *http.Request) {
 	io.WriteString(w, "Hello, world!\n")
 }
 ```
@@ -139,12 +136,31 @@ func ListenAndServe(addr string, handler Handler) error {
 1. `http.HandleFunc` 会将指定 `pattern` (模式、路由) 的 `handler` 注册在 `DefaultServeMux` 上面
 2. `http.ListenAndServe` 如果 `handler` 为 `nil` ，在这种情况下使用 `DefaultServeMux` 。
 
+---
 
 #### 那么问题来了 `DefaultServeMux` 是啥？
-不管是啥，肯定是实现了 http.Handler 接口
 
 ```go
-type Handler interface {
-	ServeHTTP(ResponseWriter, *Request)
+type ServeMux struct {
+	mu    sync.RWMutex
+	m     map[string]muxEntry
+	es    []muxEntry // slice of entries sorted from longest to shortest.
+	hosts bool       // whether any patterns contain hostnames
 }
+
+type muxEntry struct {
+	h       Handler
+	pattern string
+}
+
+// NewServeMux allocates and returns a new ServeMux.
+func NewServeMux() *ServeMux { return new(ServeMux) }
+
+// DefaultServeMux is the default ServeMux used by Serve.
+var DefaultServeMux = &defaultServeMux
+
+var defaultServeMux ServeMux
 ```
+
+---
+
