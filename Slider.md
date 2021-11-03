@@ -9,7 +9,7 @@ style: |
   pre {
     margin: 0.5em 0 0 0;
   }
-size: 4K
+size: 16:9
 _class: lead
 paginate: true
 backgroundColor: #fff
@@ -481,7 +481,7 @@ func (mux *ServeMux) match(path string) (h Handler, pattern string) {
 
 -----------------------------------------------------------------------
 
-## 一个 HTTP 连接处理流程
+## 扩展阅读：一个 HTTP 连接处理流程
 
 ![An HTTP connection processing flow](./assets/http-connection-processing-flow.png)
 
