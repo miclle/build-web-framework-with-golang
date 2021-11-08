@@ -19,7 +19,7 @@ marp: true
 
 <!-- ![bg left:40% 80%](https://marp.app/assets/marp.svg) -->
 
-# **Build web framework with golang**
+# **Building web framework with golang**
 
 Miclle Zheng
 
@@ -27,7 +27,7 @@ Miclle Zheng
 
 -----------------------------------------------------------------------
 
-# Simple HTTP Server
+# 一、Simple HTTP Server
 
 使用 [`net/http#ListenAndServe`](https://golang.org/pkg/net/http/#ListenAndServe) 包实现一个最简单、最基础的 HTTP 服务。
 
@@ -169,7 +169,7 @@ func (mux *ServeMux) ServeHTTP(w ResponseWriter, r *Request)
 
 -----------------------------------------------------------------------
 
-# ServeMux
+# 二、ServeMux
 
 https://golang.org/pkg/net/http/#ServeMux
 
@@ -487,3 +487,30 @@ func (mux *ServeMux) match(path string) (h Handler, pattern string) {
 
 https://astaxie.gitbooks.io/build-web-application-with-golang/content/zh/03.3.html
 
+-----------------------------------------------------------------------
+
+# ServeMux 的问题
+
+1. 太简单了，不支持路由占位符，比如： `/users/:id`
+2. 不支持路由 **Middleware Handler**
+
+```
+Router → Middleware Handler → Application Handler
+```
+```go
+func main() {
+	handler := http.NewServeMux()
+
+	var basicAuth = func(w http.ResponseWriter, r *http.Request) {
+		// TODO: check username and password
+	}
+
+	var userProfile = func(w http.ResponseWriter, r *http.Request) {
+		// TODO: get user profile
+	}
+
+	handler.HandleFunc("/users/:id", basicAuth, userProfile)
+}
+```
+
+-----------------------------------------------------------------------
