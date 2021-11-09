@@ -491,26 +491,299 @@ https://astaxie.gitbooks.io/build-web-application-with-golang/content/zh/03.3.ht
 
 # ServeMux 的问题
 
-1. 太简单了，不支持路由占位符，比如： `/users/:id`
+<small>
+
+1. `pattern` 不支持路由占位符、通配符
+	```go
+	"/users/:id"
+	"/users/{id}"
+	"/users/{\^[0-9]*$\}"
+	```
 2. 不支持路由 **Middleware Handler**
+	```go
+	// Router → ...Middleware Handler → Application Handler
+	var basicAuth   = func(w http.ResponseWriter, r *http.Request) { /* TODO: check username and password */ }
+	var userProfile = func(w http.ResponseWriter, r *http.Request) { /* TODO: get user profile */ }
+	DefaultServeMux.HandleFunc("/users/:id", basicAuth, userProfile)
+	```
+3. HandlerFunc 过于原始，复杂业务会导致大量重复代码：
+	- 没有便捷的请求参数绑定方法：
+		- `/users/:id`=>`req.Get("id")`/`req.GetUint("id")`
+		- Request Query Params => `req.BindParams(&struct)`
+		- Request Body => `req.BindJSON(&struct)`
+	- 没有 `context`，如何传递上下文参数
+	- Debug Logger: `X-Request-ID` 如何在 handler 调用链中传递？
+	-
 
-```
-Router → Middleware Handler → Application Handler
-```
+</small>
+
+-----------------------------------------------------------------------
+
+# 三、如何实现一个 Web Engine
+
+1. http 请求从 `http.ListenAndServe` 方法开始，所以必须实现 `http.Handler` 接口
+
 ```go
-func main() {
-	handler := http.NewServeMux()
+// ServeHTTP conforms to the http.Handler interface.
+func (engine *Engine) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
-	var basicAuth = func(w http.ResponseWriter, r *http.Request) {
-		// TODO: check username and password
-	}
+}
+```
 
-	var userProfile = func(w http.ResponseWriter, r *http.Request) {
-		// TODO: get user profile
-	}
+2. 为了启动方便，实现一个 `Run` 方法
+```go
+func (engine *Engine) Run(addr string) (err error) {
+	err = http.ListenAndServe(addr, engine)
+	return
+}
 
-	handler.HandleFunc("/users/:id", basicAuth, userProfile)
+func (engine *Engine) RunTLS(addr, certFile, keyFile string) (err error) {
+	err = http.ListenAndServeTLS(addr, certFile, keyFile, engine)
+	return
 }
 ```
 
 -----------------------------------------------------------------------
+
+3. 实现一个路由注册方法 `Handle`
+```go
+func (engine *Engine) Handle(httpMethod, relativePath string, handlers ...HandlerFunc)
+
+func (engine *Engine) GET(relativePath string, handlers ...HandlerFunc){
+	return engine.Handle(http.MethodGet, relativePath, handlers...)
+}
+
+func (engine *Engine) POST(relativePath string, handlers ...HandlerFunc)
+func (engine *Engine) DELETE(relativePath string, handlers ...HandlerFunc)
+func (engine *Engine) PATCH(relativePath string, handlers ...HandlerFunc)
+func (engine *Engine) PUT(relativePath string, handlers ...HandlerFunc)
+func (engine *Engine) OPTIONS(relativePath string, handlers ...HandlerFunc)
+func (engine *Engine) HEAD(relativePath string, handlers ...HandlerFunc)
+```
+
+-----------------------------------------------------------------------
+
+4. 实现一个路由 `match` 方法，在 `ServeHTTP` 方法中调用
+```go
+func (engine *Engine) match(path string) (h Handler)
+```
+
+- 路由支持占位符、通配符：
+	- `/posts/:id`
+	- `/posts/*`
+- 支持具名路由
+	- `/posts/latest`
+- 优先级按定义顺序
+
+-----------------------------------------------------------------------
+
+# 四、Gin Web Framework
+
+<img src="./assets/gin.png" width="100%" />
+<hr />
+1. 多种路由注册方式
+<div>
+<div style="width:49%; float:left">
+
+```go
+func main() {
+	router := gin.Default()
+
+	router.GET("/someGet", gettingHandler)
+	router.POST("/somePost", postingHandler)
+	router.PUT("/somePut", puttingHandler)
+	router.DELETE("/someDelete", deletingHandler)
+	router.PATCH("/somePatch", patchingHandler)
+	router.HEAD("/someHead", headHandler)
+	router.OPTIONS("/someOptions", optionsHandler)
+
+	// By default it serves on :8080 unless a
+	// PORT environment variable was defined.
+	router.Run()
+	// router.Run(":3000") for a hard coded port
+}
+```
+
+</div>
+<div style="width:49%; float:right">
+
+```
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] GET     /someGet     -->  gettingHandler  (3 handlers)
+[GIN-debug] POST    /somePost    -->  postingHandler  (3 handlers)
+[GIN-debug] PUT     /somePut     -->  puttingHandler  (3 handlers)
+[GIN-debug] DELETE  /someDelete  -->  deletingHandler (3 handlers)
+[GIN-debug] PATCH   /somePatch   -->  patchingHandler (3 handlers)
+[GIN-debug] HEAD    /someHead    -->  headHandler     (3 handlers)
+[GIN-debug] OPTIONS /someOptions -->  optionsHandler  (3 handlers)
+
+[GIN-debug] Listening and serving HTTP on :8080
+```
+
+</div>
+</div>
+
+-----------------------------------------------------------------------
+
+2. 支持路由组
+
+<div>
+<div style="width:49%; float:left">
+
+```go
+func main() {
+	router := gin.Default()
+
+	// 简单的路由组: v1
+	v1 := router.Group("/v1")
+	{
+		v1.POST("/login", loginEndpoint)
+		v1.POST("/submit", submitEndpoint)
+		v1.POST("/read", readEndpoint)
+	}
+
+	// 简单的路由组: v2
+	v2 := router.Group("/v2")
+	{
+		v2.POST("/login", loginEndpoint)
+		v2.POST("/submit", submitEndpoint)
+		v2.POST("/read", readEndpoint)
+	}
+
+	router.Run(":8080")
+}
+```
+
+</div>
+<div style="width:49%; float:right">
+
+```
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] POST    /v1/login    --> loginEndpoint    (3 handlers)
+[GIN-debug] POST    /v1/submit   --> submitEndpoint   (3 handlers)
+[GIN-debug] POST    /v1/read     --> readEndpoint     (3 handlers)
+
+[GIN-debug] POST    /v2/login    --> loginEndpoint    (3 handlers)
+[GIN-debug] POST    /v2/submit   --> submitEndpoint   (3 handlers)
+[GIN-debug] POST    /v2/read     --> readEndpoint     (3 handlers)
+
+[GIN-debug] Listening and serving HTTP on :8080
+```
+
+</div>
+</div>
+
+-----------------------------------------------------------------------
+
+3. 丰富的模型绑定和验证方法
+```go
+func (c *Context) Bind(obj interface{}) error
+func (c *Context) BindJSON(obj interface{}) error
+func (c *Context) BindXML(obj interface{}) error
+func (c *Context) BindQuery(obj interface{}) error
+func (c *Context) BindYAML(obj interface{}) error
+func (c *Context) BindHeader(obj interface{}) error
+func (c *Context) BindUri(obj interface{}) error
+func (c *Context) MustBindWith(obj interface{}, b binding.Binding) error
+func (c *Context) ShouldBind(obj interface{}) error
+func (c *Context) ShouldBindJSON(obj interface{}) error
+func (c *Context) ShouldBindXML(obj interface{}) error
+func (c *Context) ShouldBindQuery(obj interface{}) error
+func (c *Context) ShouldBindYAML(obj interface{}) error
+func (c *Context) ShouldBindHeader(obj interface{}) error
+func (c *Context) ShouldBindUri(obj interface{}) error
+func (c *Context) ShouldBindWith(obj interface{}, b binding.Binding) error
+func (c *Context) ShouldBindBodyWith(obj interface{}, bb binding.BindingBody) (err error)
+
+type Auth struct {
+	Username string `form:"user"     json:"user"     xml:"user"     binding:"required"`
+	Password string `form:"password" json:"password" xml:"password" binding:"required"`
+}
+
+func main() {
+	router := gin.Default()
+
+	// 绑定 JSON ({"username": "manu", "password": "123"})
+	router.POST("/login", func(c *gin.Context) {
+		var auth Auth
+		if err := c.ShouldBindJSON(&auth); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		// TODO(m) check username and password
+		c.JSON(http.StatusOK, gin.H{"status": "you are logged in"})
+	})
+}
+```
+
+-----------------------------------------------------------------------
+
+4. 丰富的数据渲染方法
+```go
+func (c *Context) Render(code int, r render.Render)
+func (c *Context) HTML(code int, name string, obj interface{})
+func (c *Context) IndentedJSON(code int, obj interface{})
+func (c *Context) SecureJSON(code int, obj interface{})
+func (c *Context) JSONP(code int, obj interface{})
+func (c *Context) JSON(code int, obj interface{})
+func (c *Context) AsciiJSON(code int, obj interface{})
+func (c *Context) PureJSON(code int, obj interface{})
+func (c *Context) XML(code int, obj interface{})
+func (c *Context) YAML(code int, obj interface{})
+func (c *Context) ProtoBuf(code int, obj interface{})
+func (c *Context) String(code int, format string, values ...interface{})
+func (c *Context) Redirect(code int, location string)
+func (c *Context) Data(code int, contentType string, data []byte)
+func (c *Context) DataFromReader(code int, contentLength int64, contentType string, reader io.Reader, extraHeaders map[string]string)
+func (c *Context) File(filepath string)
+func (c *Context) FileFromFS(filepath string, fs http.FileSystem)
+func (c *Context) FileAttachment(filepath, filename string)
+func (c *Context) SSEvent(name string, message interface{})
+func (c *Context) Stream(step func(w io.Writer) bool) bool
+```
+
+-----------------------------------------------------------------------
+
+5. `gin.Context` Metadata Management
+
+```go
+func (c *Context) Set(key string, value interface{})
+func (c *Context) Get(key string) (value interface{}, exists bool)
+func (c *Context) MustGet(key string) interface{}
+func (c *Context) GetString(key string) (s string)
+func (c *Context) GetBool(key string) (b bool)
+func (c *Context) GetInt(key string) (i int)
+func (c *Context) GetInt64(key string) (i64 int64)
+func (c *Context) GetUint(key string) (ui uint)
+func (c *Context) GetUint64(key string) (ui64 uint64)
+func (c *Context) GetFloat64(key string) (f64 float64)
+func (c *Context) GetTime(key string) (t time.Time)
+func (c *Context) GetDuration(key string) (d time.Duration)
+func (c *Context) GetStringSlice(key string) (ss []string)
+func (c *Context) GetStringMap(key string) (sm map[string]interface{})
+func (c *Context) GetStringMapString(key string) (sms map[string]string)
+func (c *Context) GetStringMapStringSlice(key string) (smss map[string][]string)
+
+func Logger() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Set("example", "12345")
+		c.Next()
+	}
+}
+
+func main() {
+	router := gin.New()
+	router.Use(Logger())
+	router.GET("/test", func(c *gin.Context) {
+		example := c.MustGet("example").(string)
+		log.Println(example) // it would print: "12345"
+	})
+	router.Run()
+}
+```
