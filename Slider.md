@@ -489,7 +489,7 @@ https://astaxie.gitbooks.io/build-web-application-with-golang/content/zh/03.3.ht
 
 -----------------------------------------------------------------------
 
-# ServeMux 的问题
+## ServeMux 的问题
 
 <small>
 
@@ -513,71 +513,12 @@ https://astaxie.gitbooks.io/build-web-application-with-golang/content/zh/03.3.ht
 		- Request Body => `req.BindJSON(&struct)`
 	- 没有 `context`，如何传递上下文参数
 	- Debug Logger: `X-Request-ID` 如何在 handler 调用链中传递？
-	-
 
 </small>
 
 -----------------------------------------------------------------------
 
-# 三、如何实现一个 Web Engine
-
-1. http 请求从 `http.ListenAndServe` 方法开始，所以必须实现 `http.Handler` 接口
-
-```go
-// ServeHTTP conforms to the http.Handler interface.
-func (engine *Engine) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-
-}
-```
-
-2. 为了启动方便，实现一个 `Run` 方法
-```go
-func (engine *Engine) Run(addr string) (err error) {
-	err = http.ListenAndServe(addr, engine)
-	return
-}
-
-func (engine *Engine) RunTLS(addr, certFile, keyFile string) (err error) {
-	err = http.ListenAndServeTLS(addr, certFile, keyFile, engine)
-	return
-}
-```
-
------------------------------------------------------------------------
-
-3. 实现一个路由注册方法 `Handle`
-```go
-func (engine *Engine) Handle(httpMethod, relativePath string, handlers ...HandlerFunc)
-
-func (engine *Engine) GET(relativePath string, handlers ...HandlerFunc){
-	return engine.Handle(http.MethodGet, relativePath, handlers...)
-}
-
-func (engine *Engine) POST(relativePath string, handlers ...HandlerFunc)
-func (engine *Engine) DELETE(relativePath string, handlers ...HandlerFunc)
-func (engine *Engine) PATCH(relativePath string, handlers ...HandlerFunc)
-func (engine *Engine) PUT(relativePath string, handlers ...HandlerFunc)
-func (engine *Engine) OPTIONS(relativePath string, handlers ...HandlerFunc)
-func (engine *Engine) HEAD(relativePath string, handlers ...HandlerFunc)
-```
-
------------------------------------------------------------------------
-
-4. 实现一个路由 `match` 方法，在 `ServeHTTP` 方法中调用
-```go
-func (engine *Engine) match(path string) (h Handler)
-```
-
-- 路由支持占位符、通配符：
-	- `/posts/:id`
-	- `/posts/*`
-- 支持具名路由
-	- `/posts/latest`
-- 优先级按定义顺序
-
------------------------------------------------------------------------
-
-# 四、Gin Web Framework
+# 三、Gin Web Framework
 
 <img src="./assets/gin.png" width="100%" />
 <hr />
@@ -750,7 +691,7 @@ func (c *Context) Stream(step func(w io.Writer) bool) bool
 
 -----------------------------------------------------------------------
 
-5. `gin.Context` Metadata Management
+5. `gin.Context` Metadata Management （在 Handler 调用链中传递数据）
 
 ```go
 func (c *Context) Set(key string, value interface{})
@@ -770,6 +711,28 @@ func (c *Context) GetStringMap(key string) (sm map[string]interface{})
 func (c *Context) GetStringMapString(key string) (sms map[string]string)
 func (c *Context) GetStringMapStringSlice(key string) (smss map[string][]string)
 
+
+func main() {
+	router := gin.New()
+
+	var middleware = func(c *gin.Context) {
+		c.Set("example", "12345")
+		c.Next()
+	}
+
+	router.GET("/posts/:id", middleware, func(c *gin.Context) {
+		example := c.MustGet("example").(string)
+		log.Println(example) // it would print: "12345"
+	})
+	router.Run()
+}
+```
+
+-----------------------------------------------------------------------
+
+6. 强大的 `Middleware` 扩展机制
+
+```go
 func Logger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Set("example", "12345")
@@ -779,7 +742,9 @@ func Logger() gin.HandlerFunc {
 
 func main() {
 	router := gin.New()
+
 	router.Use(Logger())
+
 	router.GET("/test", func(c *gin.Context) {
 		example := c.MustGet("example").(string)
 		log.Println(example) // it would print: "12345"
@@ -787,3 +752,417 @@ func main() {
 	router.Run()
 }
 ```
+
+-----------------------------------------------------------------------
+
+## Gin 的问题
+1. `gin.Context` 过于强大，几乎所有的 `Helper` 都挂载在 `Context` 上
+	- gin.Context 处理参数绑定
+	- gin.Context 处理上下文档参数传递
+	- gin.Context 处理数据渲染
+	- gin.Context 接管请求流程控制， `c.Next()`, `c.Abort()`
+2. 无贯穿 Handler 调用链的 Logger，在每一个 Handler 中从 Context 中，或 Header 中初始化一个带有 `X-Request-ID` 信息的 Logger
+3. `gin.Context` 不是 interface 设计，无法扩展
+4. gin 与 Ruby on Rails 相比，gin 在底层协议封装与业务逻辑处理之间，更多的是在路由层面，以及提供丰富的帮助方法；gin 仍属于高度抽象的 HTTP Rack 框架；
+
+<small>
+
+> 在 Rack 的协议中，将 Rack 应用描述成一个可以响应 call 方法的 Ruby 对象，它仅接受来自外界的一个参数，也就是环境，然后返回一个只包含三个值的数组，按照顺序分别是状态码、HTTP Headers 以及响应请求的正文。
+
+</small>
+
+-----------------------------------------------------------------------
+
+### 示例代码
+
+<div>
+<div style="width:49%; float:left">
+
+```go
+// Login 认证用户
+func Login(c *gin.Context) {
+	var (
+		services = ctrl.GetServices(c)
+		log      = logger.New(c)
+		info     = &params.AuthInfo{}
+	)
+
+	if err := c.BindJSON(info); err != nil {
+		log.Error(err.Error())
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	account, err := services.Authenticator.Auth(log, info)
+	if err != nil {
+		log.Error(err.Error())
+		c.AbortWithStatusJSON(http.StatusBadRequest, e)
+		return
+	}
+
+	cookie := &http.Cookie{
+		Name:     "APPNAME",
+		Value:    account.Token,
+		Path:     "/",
+		MaxAge:   3600,
+		Domain:   "domain.com",
+		Secure:   config.GetBool("cookie_secure"),
+		HttpOnly: true,
+		SameSite: http.SameSiteNoneMode,
+	}
+
+	http.SetCookie(c.Writer, cookie)
+
+	c.JSON(http.StatusOK, account)
+}
+```
+
+</div>
+<div style="width:49%; float:right">
+
+```go
+// Signup 用户注册
+func Signup(c *gin.Context) {
+	var (
+		services = ctrl.GetServices(c)
+		log      = logger.New(c)
+		info     = &params.CreateUserArgs{}
+	)
+
+	if err := c.BindJSON(info); err != nil {
+		log.Error(err.Error())
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	account, err := services.User.Create(log, info)
+	if err != nil {
+		log.Error(err.Error())
+		c.AbortWithStatusJSON(http.StatusBadRequest, e)
+		return
+	}
+
+	cookie := &http.Cookie{
+		Name:     "APPNAME",
+		Value:    token.Token,
+		Path:     "/",
+		MaxAge:   3600,
+		Domain:   "domain.com",
+		Secure:   config.GetBool("cookie_secure"),
+		HttpOnly: true,
+		SameSite: http.SameSiteNoneMode,
+	}
+
+	http.SetCookie(c.Writer, cookie)
+
+	c.JSON(http.StatusOK, account)
+}
+```
+
+</div>
+</div>
+
+-----------------------------------------------------------------------
+
+# 四、如何实现一个 Web Engine ?
+
+1. http 请求从 `http.ListenAndServe` 方法开始，所以必须实现 `http.Handler` 接口
+
+```go
+// ServeHTTP conforms to the http.Handler interface.
+func (engine *Engine) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+
+}
+
+// 为了启动方便，实现一个 `Run` 方法
+func (engine *Engine) Run(addr string) (err error) {
+	err = http.ListenAndServe(addr, engine)
+	return
+}
+
+func (engine *Engine) RunTLS(addr, certFile, keyFile string) (err error) {
+	err = http.ListenAndServeTLS(addr, certFile, keyFile, engine)
+	return
+}
+```
+
+-----------------------------------------------------------------------
+
+2. 实现一个路由注册方法 `Handle`
+```go
+func (engine *Engine) Handle(httpMethod, relativePath string, handlers ...HandlerFunc)
+
+func (engine *Engine) GET(relativePath string, handlers ...HandlerFunc){
+	return engine.Handle(http.MethodGet, relativePath, handlers...)
+}
+
+func (engine *Engine) POST(relativePath string, handlers ...HandlerFunc)
+func (engine *Engine) DELETE(relativePath string, handlers ...HandlerFunc)
+func (engine *Engine) PATCH(relativePath string, handlers ...HandlerFunc)
+func (engine *Engine) PUT(relativePath string, handlers ...HandlerFunc)
+func (engine *Engine) OPTIONS(relativePath string, handlers ...HandlerFunc)
+func (engine *Engine) HEAD(relativePath string, handlers ...HandlerFunc)
+```
+
+-----------------------------------------------------------------------
+
+3. 实现一个路由 `match` 方法，在 `ServeHTTP` 方法中调用
+```go
+func (engine *Engine) match(path string) (h Handler)
+```
+
+- 路由支持占位符、通配符：
+	- `/posts/:id`
+	- `/posts/*`
+- 支持具名路由
+	- `/posts/latest`
+- 匹配优先级使用定义顺序
+	1. `/posts/latest`
+	2. `/posts/:id`
+
+-----------------------------------------------------------------------
+
+```go
+func main() {
+	engine := engine.New()
+
+	engine.POST("/posts", createPostsHandler)
+	engine.GET("/posts", getPostsHandler)
+	engine.GET("/posts/latest", getLatestPostsHandler)
+
+	engine.Use(logger.Logger)
+
+	engine.Group("/posts/:id", getPostMiddleware, func(group *Router) {
+		group.GET("", getPostHandler)
+		group.PATCH("", updatePostHandler)
+		group.DELETE("", deletePostHandler)
+	})
+
+	engine.Run()
+}
+```
+
+-----------------------------------------------------------------------
+
+4. 贯穿 Handler 调用链的 Logger
+
+<div>
+<div style="width:48%; float:left">
+
+```go
+func Login(c *gin.Context) {
+	var (
+		log      = logger.New(c)
+		info     = &params.AuthInfo{}
+	)
+
+	if err := c.BindJSON(info); err != nil {
+		log.Error(err.Error())
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	...
+}
+```
+
+</div>
+
+<div style="width:4%; float:left; padding-top: 150px; text-align: center">
+→
+</div>
+
+<div style="width:48%; float:right">
+
+```go
+func Login(c *gin.Context) {
+	var (
+		// log = logger.New(c)
+		info = &params.AuthInfo{}
+	)
+
+	if err := c.BindJSON(info); err != nil {
+		c.Logger.Error(err.Error())
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	...
+}
+```
+
+</div>
+</div>
+
+-----------------------------------------------------------------------
+
+5. Handler 改造
+
+如果把 web 服务 API 看成一个函数集，可以有如下思考：
+
+- 用户发出的请求作为函数的入参
+- 函数的返回值作为请求的响应
+- 将请求参数的数据绑定，以及请求返回结果渲染这些与业务无关逻辑，抽象到框架中
+
+-----------------------------------------------------------------------
+伪代码：
+
+```go
+// posts
+RoutePattern1(req *http.Request) (resp http.ResponseWriter, err error)
+
+// posts/latest
+RoutePattern2(req *http.Request) (resp http.ResponseWriter, err error)
+
+// posts/:id
+RoutePattern3(req *http.Request) (resp http.ResponseWriter, err error)
+```
+
+进一步把 http.Request 封装在 Context 中
+```go
+// posts
+RoutePattern1(c *Context) (resp http.ResponseWriter, err error)
+
+// posts/latest
+RoutePattern2(c *Context) (resp http.ResponseWriter, err error)
+
+// posts/:id
+RoutePattern3(c *Context) (resp http.ResponseWriter, err error)
+```
+
+-----------------------------------------------------------------------
+
+把反复出现的请求数据绑定提升到函数参数中
+
+```go
+// 重复代码
+if err := c.BindJSON(&args); err != nil {
+	log.Error(err.Error())
+	c.AbortWithError(http.StatusBadRequest, err)
+	return
+}
+```
+
+```go
+type Info struct {
+	ID uint `uri:"id" binding:"required"`
+}
+
+RoutePattern1(c *Context, info *Info) (resp http.ResponseWriter, err error)
+```
+
+```go
+type AuthInfo struct {
+	Login     string `json:"login"    binding:"required"`
+	Password  string `json:"password" binding:"required"`
+}
+
+RoutePattern1(c *Context, info *AuthInfo) (resp http.ResponseWriter, err error)
+```
+
+-----------------------------------------------------------------------
+
+
+把 Response 数据渲染交给返回值，并通过 Request `Content-Type` 来指定返回数据的格式
+
+```go
+type Info struct {
+	ID uint `uri:"id" binding:"required"`
+}
+
+RoutePattern1(c *Context, info *Info) (post *Post, err error)
+```
+
+```go
+type AuthInfo struct {
+	Login    string `json:"login"    binding:"required"`
+	Password string `json:"password" binding:"required"`
+}
+
+RoutePattern1(c *Context, info *AuthInfo) (account *Account, err error)
+```
+
+- 通过函数本身 `return` 来做流程控制，判断 `err` 是否为 `nil` 来决定是否继续执行
+- 可以自定义 error 来决定 Response 的状态码
+
+-----------------------------------------------------------------------
+
+完整示例：
+
+```go
+type CreatePostsArgs struct {
+	Title   string `json:"title"   binding:"required"`
+	Content string `json:"content" binding:"required"`
+}
+
+type Post struct {
+	Title     string `json:"title"      xml:"title"`
+	Content   string `json:"content"    xml:"content"`
+	CreatedAt int64	 `json:"created_at" xml:"created_at"`
+	UpdatedAt int64	 `json:"updated_at" xml:"updated_at"`
+}
+
+func CreatePostsHandler(c *engine.Context, args *CreatePostsArgs)(post *Post, err error)
+	if post, err = service.CreatePost(args); err != nil {
+		c.Logger.Error(err.Error()) // 带了 X-Request-ID 信息的 Logger
+		return
+	}
+	return post, nil
+}
+
+func main() {
+	engine := engine.New()
+	engine.POST("/posts", CreatePostsHandler)
+	engine.Run()
+}
+```
+
+-----------------------------------------------------------------------
+
+如果把 Handler 返回值进一步抽象：
+
+```go
+type Response struct {
+	Data interface{}
+	Error error
+	Code int
+}
+
+func CreatePostsHandler(c *engine.Context, args *CreatePostsArgs)(resp Response)
+	if post, err := service.CreatePost(args); err != nil {
+		c.Logger.Error(err.Error())
+		resp.Error = err
+		return
+	}
+
+	resp.Data = post
+	resp.Code = http.StatusCreated
+
+	return
+}
+
+```
+
+-----------------------------------------------------------------------
+
+<div style="text-align: center; padding-top: 250px; ">
+
+# 讲了这么多，这个 Web Engine 该怎么实现呢？
+
+</div>
+
+-----------------------------------------------------------------------
+
+<div style="text-align: center; padding-top: 250px; ">
+
+# 以后再说，这个 PPT 就不讲了。
+
+</div>
+
+-----------------------------------------------------------------------
+
+<div style="text-align: center; padding-top: 250px; ">
+
+# Q & A
+
+</div>
